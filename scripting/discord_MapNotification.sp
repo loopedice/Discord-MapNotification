@@ -270,8 +270,7 @@ public void OnWebHookExecuted(HTTPResponse response, any value)
     {
         if (response.Data != null)
         {
-            JSONObject json = new JSONObject();
-            json = json.FromString(response.Data.ToString());
+            JSONObject json = JSONObject.FromString(response.Data.ToString());
             if (json.HasKey("id"))
             {
                 json.GetString("id", g_sMessageID, sizeof(g_sMessageID));
