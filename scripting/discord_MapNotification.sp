@@ -251,7 +251,7 @@ void PrepareAndSendMessage(bool test)
     {
         char sEditUrl[256];
         Format(sEditUrl, sizeof(sEditUrl), "%s/messages/%s", sHook, g_sMessageID);
-        wWebhook.Edit(sEditUrl, OnWebHookExecuted);
+        wWebhook.Edit(sEditUrl, g_sMessageID, OnWebHookExecuted);
     }
     else
     {
@@ -271,7 +271,7 @@ public void OnWebHookExecuted(HTTPResponse response, any value)
     {
         if (response.Data != null)
         {
-            JSONObject json = JSONObject.FromString(response.Data);
+            JSON_Object json = json_decode(response.Data);
             if (json.HasKey("id"))
             {
                 json.GetString("id", g_sMessageID, sizeof(g_sMessageID));
