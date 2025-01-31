@@ -4,12 +4,16 @@
 #include <regex>
 #include <autoexecconfig>
 #include <discordWebhookAPI>
+#include <json>
 
 #pragma newdecls required
 
 #define LoopValidClients(%1) for(int %1 = 1; %1 <= MaxClients; %1++) if(IsClientValid(%1))
 #define FILE_LASTMAP "addons/sourcemod/configs/DMN_LastMap.ini"
+#define FILE_MESSAGEID "addons/sourcemod/configs/DMN_MessageID.ini"
 
+
+char g_sMessageID[32];
 
 enum struct Global {
     ConVar Webhook;
@@ -41,7 +45,8 @@ public Plugin myinfo =
 public void OnPluginStart()
 {
     LoadTranslations("discord_mapnotification.phrases");
-
+    LoadMessageID();
+    
     AutoExecConfig_SetCreateDirectory(true);
     AutoExecConfig_SetCreateFile(true);
     AutoExecConfig_SetFile("discord.mapnotifications");
@@ -68,7 +73,7 @@ public void OnPluginStart()
 public void OnMapStart()
 {
     LogMessage("OnMapStart");
-    CreateTimer(15.0, Timer_PrepareMessage, _, TIMER_FLAG_NO_MAPCHANGE);
+    CreateTimer(15.0, Timer_PrepareMessage, _, TIMER_FLAG_NO_MAPCHANGE | TIMER_REPEAT);
 }
 
 public Action Command_Test(int client, int args)
@@ -241,7 +246,18 @@ void PrepareAndSendMessage(bool test)
     delete eFooter;
 
     wWebhook.AddEmbed(eEmbed);
-    wWebhook.Execute(sHook, OnWebHookExecuted);
+
+    if (strlen(g_sMessageID) > 0)
+    {
+        char sEditUrl[256];
+        Format(sEditUrl, sizeof(sEditUrl), "%s/messages/%s", sHook, g_sMessageID);
+        wWebhook.Edit(sEditUrl, OnWebHookExecuted);
+    }
+    else
+    {
+        wWebhook.Execute(sHook, OnWebHookExecuted);
+    }
+    
     delete wWebhook;
 
     UpdateLastMap(sMap);
@@ -251,9 +267,23 @@ void PrepareAndSendMessage(bool test)
 
 public void OnWebHookExecuted(HTTPResponse response, any value)
 {
-    if (response.Status != HTTPStatus_NoContent && response.Status != HTTPStatus_OK)
+    if (response.Status == HTTPStatus_OK || response.Status == HTTPStatus_NoContent)
     {
-        LogError("[Discord.OnWebHookExecuted] An error has occured while sending the webhook. Status Code: %d", response.Status);
+        if (response.Data != null)
+        {
+            JSONObject json = JSONObject.FromString(response.Data);
+            if (json.HasKey("id"))
+            {
+                json.GetString("id", g_sMessageID, sizeof(g_sMessageID));
+                SaveMessageID();
+            }
+            delete json;
+        }
+    }
+    else
+    {
+        LogError("[Discord.OnWebHookExecuted] Error: %d", response.Status);
+        g_sMessageID[0] = '\0';
     }
 }
 
@@ -298,7 +328,7 @@ void UpdateLastMap(const char[] sMap)
     }
     else
     {
-        delete fFile; // Just to be sure
+        delete fFile;
         SetFailState("[Map Notification] (UpdateLastMap) Cannot open file %s", FILE_LASTMAP);
         return;
     }
@@ -348,4 +378,26 @@ bool GetDiscordWebhook(const char[] sWebhook, char[] sUrl, int iLength)
 
     delete kvWebhook;
     return false;
+}
+
+
+void LoadMessageID()
+{
+    File fFile = OpenFile(FILE_MESSAGEID, "r");
+    if (fFile != null)
+    {
+        fFile.ReadLine(g_sMessageID, sizeof(g_sMessageID));
+        TrimString(g_sMessageID);
+        delete fFile;
+    }
+}
+
+void SaveMessageID()
+{
+    File fFile = OpenFile(FILE_MESSAGEID, "w");
+    if (fFile != null)
+    {
+        fFile.WriteLine(g_sMessageID);
+        delete fFile;
+    }
 }
