@@ -4,7 +4,6 @@
 #include <regex>
 #include <autoexecconfig>
 #include <discordWebhookAPI>
-#include <json>
 
 #pragma newdecls required
 
