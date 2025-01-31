@@ -29,8 +29,7 @@ jobs:
             echo -e "\nCompiling $file..."
             spcomp -E -w234 -O2 -v2 -i $SCRIPTING_PATH/include $file
           done
-          zip plugins.zip *smx
-          gh release upload ${{github.event.release.tag_name}} plugins.zip
+          gh release upload ${{github.event.release.tag_name}} discord_MapNotification.smx
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         working-directory: ${{ env.SCRIPTING_PATH }}/
