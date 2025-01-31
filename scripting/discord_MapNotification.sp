@@ -10,6 +10,7 @@
 #define LoopValidClients(%1) for(int %1 = 1; %1 <= MaxClients; %1++) if(IsClientValid(%1))
 #define FILE_LASTMAP "addons/sourcemod/configs/DMN_LastMap.ini"
 
+
 enum struct Global {
     ConVar Webhook;
     ConVar Avatar;
