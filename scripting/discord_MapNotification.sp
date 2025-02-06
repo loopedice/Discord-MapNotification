@@ -233,8 +233,10 @@ void PrepareAndSendMessage(bool test)
     LogMessage("sHook: %s", sHook);
     LogMessage("messageId: %s", messageId);
     if (strcmp(messageId, "")) {
+        LogMessage("Execute");
         wWebhook.Execute(sHook, OnWebHookExecuted);
     } else {
+        LogMessage("Edit");
         wWebhook.Edit(sHook, messageId, OnWebHookEdited);
     }
     delete wWebhook;
