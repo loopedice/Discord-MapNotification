@@ -230,6 +230,8 @@ void PrepareAndSendMessage(bool test)
 
     // ? Use the retrieved webhook URL
     wWebhook.AddEmbed(eEmbed);
+    LogMessage("sHook: %s", sHook);
+    LogMessage("messageId: %s", messageId);
     if (strcmp(messageId, "")) {
         wWebhook.Execute(sHook, OnWebHookExecuted);
     } else {
