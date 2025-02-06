@@ -8,11 +8,7 @@
 #pragma newdecls required
 
 #define LoopValidClients(%1) for(int %1 = 1; %1 <= MaxClients; %1++) if(IsClientValid(%1))
-#define FILE_LASTMAP "addons/sourcemod/configs/DMN_LastMap.ini"
-#define FILE_MESSAGEID "addons/sourcemod/configs/DMN_MessageID.ini"
-
-
-char g_sMessageID[32];
+#define MAX_PLAYERS 64  // Adjust as needed
 
 enum struct Global {
     ConVar Webhook;
@@ -30,12 +26,24 @@ enum struct Global {
     ConVar ServerIp;
     ConVar ServerPort;
 }
+
+// Define a struct to hold player data
+enum struct PlayerInfo {
+    char name[MAX_NAME_LENGTH];
+    int kills;
+    int deaths;
+}
+
+PlayerInfo g_Players[MAX_PLAYERS];
+int g_PlayerCount = 0;
+char messageId[64];
+
 Global Core;
 
 public Plugin myinfo =
 {
     name        = "[Discord] Map Notifications",
-    description = "Sends an message to your discord server with some informations about the current map, players online and connect link (and maybe with map image, depends on gametracker)",
+    description = "Sends a message to your Discord server with information about the current map, players online, and leaderboard.",
     version     = "1.0.2",
     author      = "Bara",
     url         = "https://github.com/Bara"
@@ -44,308 +52,215 @@ public Plugin myinfo =
 public void OnPluginStart()
 {
     LoadTranslations("discord_mapnotification.phrases");
-    LoadMessageID();
-    
+
     AutoExecConfig_SetCreateDirectory(true);
     AutoExecConfig_SetCreateFile(true);
     AutoExecConfig_SetFile("discord.mapnotifications");
     Core.Webhook = AutoExecConfig_CreateConVar("discord_map_notification_webhook", "MapNotification", "Discord webhook name for this plugin (addons/sourcemod/configs/DMN_Discord.cfg)");
     Core.Avatar = AutoExecConfig_CreateConVar("discord_map_notification_avatar", "https://csgottt.com/map_notification.png", "URL to Avatar image");
     Core.Username = AutoExecConfig_CreateConVar("discord_map_notification_username", "Map Notifications", "Discord username");
-    Core.Color = AutoExecConfig_CreateConVar("discord_map_notification_colors", "16738740", "Decimal color code\nHex to Decimal - https://www.rapidtables.com/convert/number/hex-to-decimal.html");
-    Core.LangCode = AutoExecConfig_CreateConVar("discord_map_notification_language_code", "en", "Which language (as 2 or 3 digit code) for discord messages?\nHere's a list of some/all languages codes:\nhttps://en.wikipedia.org/wiki/List_of_ISO_639-1_codes");
-    Core.Game = AutoExecConfig_CreateConVar("discord_map_notification_game", "csgo", "Which game directory for images? (Default: csgo)");
-    Core.Logo = AutoExecConfig_CreateConVar("discord_custom_logo_url", "", "If you want to set a custom logo for the embedded discord message, fill this with your logo url out.\nIf you use custom logo, map picture (from gametracker) will be ignored.");
-    Core.Icon = AutoExecConfig_CreateConVar("discord_map_notification_icon", "https://csgottt.com/map_notification.png", "URL for footer icon (empty for disabling this feature)");
-    Core.Timestamp = AutoExecConfig_CreateConVar("discord_map_notification_timestamp", "1", "Show timestamp/date in footer? (0 - Disabled, 1 - Enabled)", _, true, 0.0, true, 1.0);
-    Core.Title = AutoExecConfig_CreateConVar("discord_map_notification_title", "Custom title", "Set a custom title text or leave it blank for showing the hostname");
-    Core.FooterText = AutoExecConfig_CreateConVar("discord_map_notification_footer", "Here's the custom footer text.", "Set a custom footer text or leave it blank for showing the hostname");
-    Core.RedirectURL = AutoExecConfig_CreateConVar("discord_map_notification_redirect", "https://server.bara.dev/redirect.php", "URL to your redirect.php file, you can also use my redirect.php which is located in germany.");
-    Core.ServerIp = AutoExecConfig_CreateConVar("discord_map_notification_server_ip", "", "Set custom server ip or hostname. Keep it empty if you don't want it.");
-    Core.ServerPort = AutoExecConfig_CreateConVar("discord_map_notification_server_port", "0", "Set custom server port. Keep it 0 if you don't want it.", _, true, 0.0);
+    Core.Color = AutoExecConfig_CreateConVar("discord_map_notification_colors", "16738740", "Decimal color code");
+    Core.LangCode = AutoExecConfig_CreateConVar("discord_map_notification_language_code", "en", "Language code for Discord messages.");
+    Core.Game = AutoExecConfig_CreateConVar("discord_map_notification_game", "csgo", "Game directory for images.");
+    Core.Logo = AutoExecConfig_CreateConVar("discord_custom_logo_url", "", "Custom logo for Discord embed.");
+    Core.Icon = AutoExecConfig_CreateConVar("discord_map_notification_icon", "https://csgottt.com/map_notification.png", "Footer icon URL.");
+    Core.Timestamp = AutoExecConfig_CreateConVar("discord_map_notification_timestamp", "1", "Show timestamp in footer? (0 - No, 1 - Yes)", _, true, 0.0, true, 1.0);
+    Core.Title = AutoExecConfig_CreateConVar("discord_map_notification_title", "Custom title", "Set a custom title or leave blank for hostname.");
+    Core.FooterText = AutoExecConfig_CreateConVar("discord_map_notification_footer", "Here's the custom footer text.", "Set a custom footer text or leave blank for hostname.");
+    Core.RedirectURL = AutoExecConfig_CreateConVar("discord_map_notification_redirect", "https://server.bara.dev/redirect.php", "Redirect URL.");
+    Core.ServerIp = AutoExecConfig_CreateConVar("discord_map_notification_server_ip", "", "Set custom server IP.");
+    Core.ServerPort = AutoExecConfig_CreateConVar("discord_map_notification_server_port", "0", "Set custom server port.", _, true, 0.0);
+    
     AutoExecConfig_ExecuteFile();
     AutoExecConfig_CleanFile();
 
     RegAdminCmd("dmn_test", Command_Test, ADMFLAG_ROOT);
 }
 
+Handle g_Timer = null;
+
 public void OnMapStart()
 {
     LogMessage("OnMapStart");
-    CreateTimer(15.0, Timer_PrepareMessage, _, TIMER_FLAG_NO_MAPCHANGE | TIMER_REPEAT);
+
+    if (g_Timer != null)
+    {
+        KillTimer(g_Timer);
+    }
+    
+    g_Timer = CreateTimer(15.0, Timer_PrepareMessage, _, TIMER_REPEAT | TIMER_FLAG_NO_MAPCHANGE);
 }
 
 public Action Command_Test(int client, int args)
 {
     PrepareAndSendMessage(true);
-
     return Plugin_Stop;
 }
 
 public Action Timer_PrepareMessage(Handle timer)
 {
+    LogMessage("Timer executed: Preparing Discord Message.");  // Debug message
     PrepareAndSendMessage(false);
-
-    return Plugin_Stop;
+    return Plugin_Continue;  // Allow the timer to keep repeating
 }
 
+
+// Sort players by kills (descending)
+void SortPlayersByKills()
+{
+    for (int i = 0; i < g_PlayerCount - 1; i++)
+    {
+        for (int j = 0; j < g_PlayerCount - i - 1; j++)
+        {
+            if (g_Players[j].kills < g_Players[j + 1].kills)
+            {
+                // Manually copy struct instead of direct assignment
+                PlayerInfo temp;
+                strcopy(temp.name, MAX_NAME_LENGTH, g_Players[j].name);
+                temp.kills = g_Players[j].kills;
+                temp.deaths = g_Players[j].deaths;
+
+                strcopy(g_Players[j].name, MAX_NAME_LENGTH, g_Players[j + 1].name);
+                g_Players[j].kills = g_Players[j + 1].kills;
+                g_Players[j].deaths = g_Players[j + 1].deaths;
+
+                strcopy(g_Players[j + 1].name, MAX_NAME_LENGTH, temp.name);
+                g_Players[j + 1].kills = temp.kills;
+                g_Players[j + 1].deaths = temp.deaths;
+            }
+        }
+    }
+}
+
+// Main function to collect player stats and send to Discord
 void PrepareAndSendMessage(bool test)
 {
-    char sHostname[512];
+    g_PlayerCount = 0; // Reset player count
+
+    // Get hostname
+    char sHostname[128];
     ConVar cvar = FindConVar("hostname");
     cvar.GetString(sHostname, sizeof(sHostname));
 
-    /* Get map */
-    char sMap[64], sLastMap[32];
-    GetCurrentMap(sMap, sizeof(sMap));
-    GetLastMap(sLastMap, sizeof(sLastMap));
+    // Get map name
+    char mapName[64];
+    GetCurrentMap(mapName, sizeof(mapName));
 
-    /* Get max player information */
-    int iMax = GetMaxHumanPlayers();
+    // Get player count
+    char playerCount[32];
+    Format(playerCount, sizeof(playerCount), "Players: %d/%d", g_PlayerCount, MaxClients);
 
-    /* Get player/bot informations */
-    int iPlayers = 0;
+    // Get clickable link
+    char serverIp[64], joinLink[128];
+    Core.ServerIp.GetString(serverIp, sizeof(serverIp));
+    Format(joinLink, sizeof(joinLink), "[Join Server](steam://connect/%s)", serverIp);
 
+
+    // Use the 'test' parameter
+    if (test)
+    {
+        Format(sHostname, sizeof(sHostname), "[TEST] %s", sHostname);
+    }
+
+
+    // Collect player data
     LoopValidClients(i)
     {
-        iPlayers++;
+        if (g_PlayerCount >= MAX_PLAYERS) break; // Prevent overflow
+
+        char sName[MAX_NAME_LENGTH];
+        GetClientName(i, sName, sizeof(sName));
+
+        int iKills = GetClientFrags(i);
+        int iDeaths = GetClientDeaths(i);
+
+        strcopy(g_Players[g_PlayerCount].name, MAX_NAME_LENGTH, sName);
+        g_Players[g_PlayerCount].kills = iKills;
+        g_Players[g_PlayerCount].deaths = iDeaths;
+
+        g_PlayerCount++;
     }
 
-    if (!test && StrContains(sLastMap, sMap, false) != -1 && iPlayers < 2)
-    {
-        return;
-    }
-
-    char sPlayers[24];
-    Format(sPlayers, sizeof(sPlayers), "%d/%d", iPlayers, iMax);
-
-    /* Get server ip + port for connection link */
-    char sIP[32];
-    Core.ServerIp.GetString(sIP, sizeof(sIP));
-
-    if (strlen(sIP) < 2)
-    {
-        int ips[4];
-        int iIP = GetConVarInt(FindConVar("hostip"));
-        ips[0] = (iIP >> 24) & 0x000000FF;
-        ips[1] = (iIP >> 16) & 0x000000FF;
-        ips[2] = (iIP >> 8) & 0x000000FF;
-        ips[3] = iIP & 0x000000FF;
-        Format(sIP, sizeof(sIP), "%d.%d.%d.%d", ips[0], ips[1], ips[2], ips[3]);
-    }
-
-    cvar = FindConVar("hostport");
-    int iPort = Core.ServerPort.IntValue;
-
-    if (iPort < 1)
-    {
-        iPort = cvar.IntValue;
-    }
-
-    char sConnect[512];
-    char sURL[256];
-    Core.RedirectURL.GetString(sURL, sizeof(sURL));
-    Format(sConnect, sizeof(sConnect), "[%s:%d](%s?ip=%s&port=%d)", sIP, iPort, sURL, sIP, iPort);
-
-    char sGame[18];
-    Core.Game.GetString(sGame, sizeof(sGame));
-
-    char sSplit[3][32];
-    if (ExplodeString(sMap, "/", sSplit, sizeof(sSplit), sizeof(sSplit[])) > 1)
-    {
-        strcopy(sMap, sizeof(sMap), sSplit[2]);
-    }
-
-    /* Set bot avatar */
-    char sThumb[256];
-    Core.Logo.GetString(sThumb, sizeof(sThumb));
-
-    if (strlen(sThumb) < 2)
-    {
-        Format(sThumb, sizeof(sThumb), "https://image.gametracker.com/images/maps/160x120/%s/%s.jpg", sGame, sMap);
-    }
-
-    /* Start and Send discord notification */
+    // ? Retrieve the webhook URL before using it
     char sWeb[256], sHook[256];
-    Core.Webhook.GetString(sWeb, sizeof(sWeb));
-    
+    Core.Webhook.GetString(sWeb, 256); 
+
     if (!GetDiscordWebhook(sWeb, sHook, sizeof(sHook)))
     {
-        SetFailState("[Map Notification] (Timer_SendMessage) Can't find webhook");
+        SetFailState("[Map Notification] (PrepareAndSendMessage) Can't find webhook");
         return;
     }
 
+    // Prepare Discord embed
     Webhook wWebhook = new Webhook();
-
-    char sName[128];
-    Core.Username.GetString(sName, sizeof(sName));
-    wWebhook.SetUsername(sName);
-
-    char sAvatar[256];
-    Core.Avatar.GetString(sAvatar, sizeof(sAvatar));
-    wWebhook.SetAvatarURL(sAvatar);
-
-    char sCode[4];
-    Core.LangCode.GetString(sCode, sizeof(sCode));
-
-    int iLang = GetLanguageByCode(sCode);
-
     Embed eEmbed = new Embed();
     eEmbed.SetColor(Core.Color.IntValue);
+    eEmbed.SetTitle(sHostname);
+    char mapDescription[128];
+    FormatEx(mapDescription, sizeof(mapDescription), "Current Map: %s", mapName);
+    eEmbed.SetDescription(mapDescription);
 
-    char sTitle[512];
-    Core.Title.GetString(sTitle, sizeof(sTitle));
-    eEmbed.SetTitle(sTitle);
+    EmbedField ePlayerCount = new EmbedField("Player Count", playerCount, true);
+    EmbedField eServerLink = new EmbedField("Join Server", joinLink, false);
+    eEmbed.AddField(ePlayerCount);
+    eEmbed.AddField(eServerLink);
 
-    if (strlen(sTitle) < 1)
-    {
-        eEmbed.SetTitle(sHostname);
-    }
 
     if (Core.Timestamp.BoolValue)
     {
         eEmbed.SetTimeStampNow();
     }
 
-    EmbedThumbnail eThumbnail = new EmbedThumbnail(sThumb);
-    eEmbed.SetThumbnail(eThumbnail);
-    delete eThumbnail;
-
-    char sNow[64];
-    Format(sNow, sizeof(sNow), "%T", "Now playing", iLang);
-    EmbedField eMap = new EmbedField(sNow, sMap, true);
-    eEmbed.AddField(eMap);
-
-    char sOnline[64];
-    Format(sOnline, sizeof(sOnline), "%T", "Players Online", iLang);
-    EmbedField ePlayers = new EmbedField(sOnline, sPlayers, true);
-    eEmbed.AddField(ePlayers);
-
-    char sJoin[128];
-    Format(sJoin, sizeof(sJoin), "%T", "Quick Join", iLang);
-    EmbedField eConnect = new EmbedField(sJoin, sConnect, true);
-    eEmbed.AddField(eConnect);
-
-    char sFooterText[628];
-    Core.FooterText.GetString(sFooterText, sizeof(sFooterText));
-    if (strlen(sFooterText) < 1)
+    // Format player leaderboard
+    char sPlayerList[1024] = ""; 
+    char sTemp[128];
+    SortPlayersByKills();
+    for (int i = 0; i < g_PlayerCount; i++)
     {
-        FormatEx(sFooterText, sizeof(sFooterText), "%s (%s:%d)", sHostname, sIP, iPort);
+        Format(sTemp, sizeof(sTemp), "**%s** - Kills: %d | Deaths: %d\n", 
+            g_Players[i].name, g_Players[i].kills, g_Players[i].deaths);
+        StrCat(sPlayerList, sizeof(sPlayerList), sTemp);
     }
 
-    EmbedFooter eFooter = new EmbedFooter(sFooterText);
-    char sIcon[256];
-    Core.Icon.GetString(sIcon, sizeof(sIcon));
-    if (strlen(sIcon))
+    if (g_PlayerCount > 0)
     {
-        eFooter.SetIconURL(sIcon);
+        EmbedField ePlayerList = new EmbedField("Leaderboard (Kills/Deaths)", sPlayerList, false);
+        eEmbed.AddField(ePlayerList);
     }
 
-    eEmbed.SetFooter(eFooter);
-    delete eFooter;
-
+    // ? Use the retrieved webhook URL
     wWebhook.AddEmbed(eEmbed);
-
-    if (strlen(g_sMessageID) > 0)
-    {
-        char sEditUrl[256];
-        Format(sEditUrl, sizeof(sEditUrl), "%s/messages/%s", sHook, g_sMessageID);
-        wWebhook.Edit(sEditUrl, g_sMessageID, OnWebHookExecuted);
-    }
-    else
-    {
+    if (strcmp(messageId, "")) {
         wWebhook.Execute(sHook, OnWebHookExecuted);
+    } else {
+        wWebhook.Edit(sHook, messageId, OnWebHookEdited);
     }
-    
     delete wWebhook;
-
-    UpdateLastMap(sMap);
-
-    return;
 }
 
 public void OnWebHookExecuted(HTTPResponse response, any value)
 {
-    if (response.Status == HTTPStatus_OK || response.Status == HTTPStatus_NoContent)
+    if (response.Status != HTTPStatus_NoContent && response.Status != HTTPStatus_OK)
     {
-        if (response.Data != null)
-        {
-            char datastr[4092];
-            response.Data.ToString(datastr, 4092);
-            JSONObject json = JSONObject.FromString(datastr);
-            if (json.HasKey("id"))
-            {
-                json.GetString("id", g_sMessageID, sizeof(g_sMessageID));
-                SaveMessageID();
-            }
-            delete json;
-        }
+        LogError("[Discord.OnWebHookExecuted] Error sending webhook. Status Code: %d", response.Status);
     }
-    else
-    {
-        LogError("[Discord.OnWebHookExecuted] Error: %d", response.Status);
-        g_sMessageID[0] = '\0';
-    }
+    // Retrieve the message's id.
+    JSONObject resData = view_as<JSONObject>(response.Data);
+    resData.GetString("id", messageId, sizeof messageId);
 }
 
-void GetLastMap(char[] sMap, int iLength)
+void OnWebHookEdited(HTTPResponse response, any value)
 {
-    File fFile = OpenFile(FILE_LASTMAP, "r");
-
-    char sBuffer[32];
-
-    if (fFile != null)
-    {
-        while (!fFile.EndOfFile() && fFile.ReadLine(sBuffer, sizeof(sBuffer)))
-        {
-            if (strlen(sBuffer) > 1)
-            {
-                strcopy(sMap, iLength, sBuffer);
-            }
-        }
-    }
-    else
-    {
-        SetFailState("[Map Notification] (GetLastMap) Cannot open file %s", FILE_LASTMAP);
-        return;
-    }
-    delete fFile;
-}
-
-void UpdateLastMap(const char[] sMap)
-{
-    File fFile = OpenFile(FILE_LASTMAP, "w+");
-
-    if (fFile != null)
-    {
-        fFile.Flush();
-        bool success = WriteFileLine(fFile, sMap);
-        if (!success)
-        {
-            delete fFile;
-            SetFailState("[Map Notification] (UpdateLastMap) Cannot write file %s", FILE_LASTMAP);
-            return;
-        }
-    }
-    else
-    {
-        delete fFile;
-        SetFailState("[Map Notification] (UpdateLastMap) Cannot open file %s", FILE_LASTMAP);
-        return;
-    }
-    delete fFile;
+  if (response.Status != HTTPStatus_OK)
+  {
+    LogError("[Discord.OnWebHookExecuted] Error editing webhook. Status Code: %d", response.Status);
+    return;
+  }
 }
 
 bool IsClientValid(int client)
 {
-    if (client > 0 && client <= MaxClients)
-    {
-        if(IsClientConnected(client) && !IsClientSourceTV(client))
-        {
-            return true;
-        }
-    }
-    return false;
+    return (client > 0 && client <= MaxClients && IsClientConnected(client) && !IsClientSourceTV(client));
 }
 
 bool GetDiscordWebhook(const char[] sWebhook, char[] sUrl, int iLength)
@@ -371,34 +286,7 @@ bool GetDiscordWebhook(const char[] sWebhook, char[] sUrl, int iLength)
 
     kvWebhook.GetString(sWebhook, sUrl, iLength, "default");
 
-    if (strlen(sUrl) > 2)
-    {
-        delete kvWebhook;
-        return true;
-    }
-
     delete kvWebhook;
-    return false;
+    return strlen(sUrl) > 2; // Returns true if webhook URL is valid
 }
 
-
-void LoadMessageID()
-{
-    File fFile = OpenFile(FILE_MESSAGEID, "r");
-    if (fFile != null)
-    {
-        fFile.ReadLine(g_sMessageID, sizeof(g_sMessageID));
-        TrimString(g_sMessageID);
-        delete fFile;
-    }
-}
-
-void SaveMessageID()
-{
-    File fFile = OpenFile(FILE_MESSAGEID, "w");
-    if (fFile != null)
-    {
-        fFile.WriteLine(g_sMessageID);
-        delete fFile;
-    }
-}
