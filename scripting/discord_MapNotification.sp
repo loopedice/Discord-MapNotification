@@ -82,13 +82,14 @@ Handle g_Timer = null;
 public void OnMapStart()
 {
     LogMessage("OnMapStart");
-
-    if (g_Timer != null)
-    {
-        KillTimer(g_Timer);
-    }
-    
     g_Timer = CreateTimer(15.0, Timer_PrepareMessage, _, TIMER_REPEAT | TIMER_FLAG_NO_MAPCHANGE);
+    LogMessage("Created timer");
+}
+
+public void onMapEnd() {
+    LogMessage("OnMapEnd");
+    delete g_Timer;
+    LogMessage("Delete timer");
 }
 
 public Action Command_Test(int client, int args)
