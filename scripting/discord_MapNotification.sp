@@ -232,7 +232,7 @@ void PrepareAndSendMessage(bool test)
     wWebhook.AddEmbed(eEmbed);
     LogMessage("sHook: %s", sHook);
     LogMessage("messageId: %s", messageId);
-    if (strcmp(messageId, "")) {
+    if (!messageId[0]) {
         LogMessage("Execute");
         wWebhook.Execute(sHook, OnWebHookExecuted);
     } else {
